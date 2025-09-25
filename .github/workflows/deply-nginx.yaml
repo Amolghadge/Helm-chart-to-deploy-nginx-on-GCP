@@ -60,10 +60,17 @@ jobs:
           which gke-gcloud-auth-plugin
           gke-gcloud-auth-plugin --version
 
-      - name: Get GKE credentials
+      - name: Get GKE credentials (traditional method)
         run: |
-          # Export the path to ensure gke-gcloud-auth-plugin is found
-          export PATH=$PATH:$(gcloud info --format="value(installation.sdk_root)")/bin
+          # Use traditional auth method instead of gke-gcloud-auth-plugin
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=False
+          
+          gcloud container clusters get-credentials "$GKE_CLUSTER" \
+            --zone "$GKE_ZONE" \
+            --project "$GKE_PROJECT"
+          
+          # Verify connection
+          kubectl cluster-info
           
           # Get cluster credentials with explicit auth plugin configuration
           gcloud container clusters get-credentials "$GKE_CLUSTER" \

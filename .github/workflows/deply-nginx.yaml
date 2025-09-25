@@ -72,3 +72,4 @@ jobs:
           kubectl get services -o wide
           kubectl get pods -o wide
           kubectl get deployments -o wide
+          

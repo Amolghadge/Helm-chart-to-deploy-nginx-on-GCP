@@ -17,6 +17,7 @@ env:
   DEPLOYMENT_NAME: nginx
   IMAGE: nginx
   HELM_CHART_PATH: ./helm-chart
+  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
 
 jobs:
   setup-build-publish-deploy:
@@ -39,6 +40,10 @@ jobs:
 
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
+
+      - name: Install GKE auth plugin and kubectl
+        run: |
+          gcloud components install gke-gcloud-auth-plugin kubectl -q
 
       - name: Configure Docker to use gcloud as a credential helper
         run: |

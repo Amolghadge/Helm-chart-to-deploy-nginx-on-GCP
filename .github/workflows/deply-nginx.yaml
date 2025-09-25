@@ -35,15 +35,18 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - name: Set up Cloud SDK and Install GKE Auth Plugin
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-          # Remove install_components here
-          # install_components: 'gke-gcloud-auth-plugin'
-        # Add a separate run step to install the component manually
-      - name: Install gke-gcloud-auth-plugin via gcloud components
-        run: gcloud components install gke-gcloud-auth-plugin --quiet
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ env.PROJECT_ID }}
+          install_components: 'gke-gcloud-auth-plugin'
+
+      - name: Configure Docker and Kubectl to use gke-gcloud-auth-plugin
+        run: |
+          gcloud --version
+          which gke-gcloud-auth-plugin
+          gke-gcloud-auth-plugin --version
+          echo "GKE auth plugin installed successfully"
 
       - name: Install kubectl
         uses: azure/setup-kubectl@v4
@@ -52,16 +55,16 @@ jobs:
 
       - name: Configure GKE credentials
         run: |
-          # Verify gke-gcloud-auth-plugin is installed
-          gke-gcloud-auth-plugin --version
-          
           # Set project
           gcloud config set project $PROJECT_ID
           
-          # Get GKE credentials
+          # Get GKE credentials with explicit plugin configuration
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
             --project "$PROJECT_ID"
+          
+          # Update kubeconfig to use the plugin
+          kubectl config view
           
           # Test connection
           kubectl cluster-info
@@ -77,25 +80,25 @@ jobs:
           helm template $DEPLOYMENT_NAME $HELM_CHART_PATH --dry-run
 
       - name: Deploy to GKE
-        run: |
-          # Set project
-          gcloud config set project $PROJECT_ID
-          
-          # Get GKE credentials (This must happen right before using kubectl/helm)
-          gcloud container clusters get-credentials "$GKE_CLUSTER" \
-            --zone "$GKE_ZONE" \
-            --project "$PROJECT_ID"
-          
-          # Verify connection
-          kubectl get nodes
-          
-          # Deploy with Helm
-          helm upgrade --install $DEPLOYMENT_NAME $HELM_CHART_PATH \
-            --namespace default \
-            --create-namespace \
-            --wait \
-            --timeout=300s \
-            --debug
+        run: |
+          # Set project
+          gcloud config set project $PROJECT_ID
+          
+          # Refresh GKE credentials
+          gcloud container clusters get-credentials "$GKE_CLUSTER" \
+            --zone "$GKE_ZONE" \
+            --project "$PROJECT_ID"
+          
+          # Verify connection
+          kubectl get nodes
+          
+          # Deploy with Helm
+          helm upgrade --install $DEPLOYMENT_NAME $HELM_CHART_PATH \
+            --namespace default \
+            --create-namespace \
+            --wait \
+            --timeout=300s \
+            --debug
 
       - name: Verify deployment
         run: |

@@ -1,0 +1,45 @@
+# helm-chart/templates/configmap.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "nginx.fullname" . }}-config
+  labels:
+    {{- include "nginx.labels" . | nindent 4 }}
+data:
+  default.conf: |
+    server {
+        listen 8080;
+        server_name {{ .Values.nginx.serverName }};
+        
+        # Security headers
+        add_header X-Frame-Options "SAMEORIGIN" always;
+        add_header X-Content-Type-Options "nosniff" always;
+        add_header X-XSS-Protection "1; mode=block" always;
+        
+        # Root directory
+        root /usr/share/nginx/html;
+        index index.html index.htm;
+        
+        # Main location
+        location / {
+            try_files $uri $uri/ =404;
+        }
+        
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+        
+        # Deny access to hidden files
+        location ~ /\. {
+            deny all;
+        }
+        
+        # Optimize static content delivery
+        location ~* \.(css|js|png|jpg|jpeg|gif|ico|svg)$ {
+            expires 1M;
+            add_header Cache-Control "public, immutable";
+        }
+    }

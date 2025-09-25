@@ -12,6 +12,7 @@ env:
   GKE_ZONE: us-central1-c
   DEPLOYMENT_NAME: nginx-deployment
   HELM_CHART_DIR: ./helm-chart
+  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
 
 jobs:
   setup-build-publish-deploy:
@@ -29,6 +30,7 @@ jobs:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
         service_account_key: ${{ secrets.GCP_SA_KEY }}
         export_default_credentials: true
+        install_components: 'gke-gcloud-auth-plugin'
 
     - name: Configure Docker for GCR
       run: gcloud auth configure-docker --quiet
@@ -39,6 +41,11 @@ jobs:
         cluster_name: ${{ env.GKE_CLUSTER }}
         location: ${{ env.GKE_ZONE }}
         project_id: ${{ env.PROJECT_ID }}
+
+    - name: Verify gke-gcloud-auth-plugin
+      run: |
+        which gke-gcloud-auth-plugin || true
+        gke-gcloud-auth-plugin --version || true
 
     - name: Verify cluster connection
       run: |
@@ -128,4 +135,5 @@ jobs:
           echo "Rollback completed"
         else
           echo "No failed deployment to rollback"
+        fi
         fi

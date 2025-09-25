@@ -33,64 +33,29 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
-          token_format: 'access_token'
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
         with:
           project_id: ${{ env.PROJECT_ID }}
-          install_components: 'gke-gcloud-auth-plugin'
 
-      - name: Configure gcloud and kubectl
+      - name: Configure kubectl to use traditional auth
         run: |
+          # Disable the gke-gcloud-auth-plugin and use traditional auth
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=False
+          
           # Set the project
           gcloud config set project $PROJECT_ID
           
-          # Install kubectl separately to ensure latest version
-          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-          chmod +x kubectl
-          sudo mv kubectl /usr/local/bin/
-          
-          # Verify installations
-          echo "=== gcloud version ==="
-          gcloud version
-          echo "=== kubectl version ==="
-          kubectl version --client
-          echo "=== gke-gcloud-auth-plugin ==="
-          which gke-gcloud-auth-plugin
-          gke-gcloud-auth-plugin --version
-
-      - name: Fix kubeconfig for gke-gcloud-auth-plugin
-        run: |
-          # Get credentials
+          # Get cluster credentials using traditional method
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
             --project "$PROJECT_ID"
           
-          # Update kubeconfig to use gcloud instead of gke-gcloud-auth-plugin
-          kubectl config set-credentials gke-user \
-            --auth-provider gcp \
-            --auth-provider-arg cmd-args=config config-helper --format=json \
-            --auth-provider-arg cmd-path=gcloud \
-            --auth-provider-arg expiry-key='{.credential.token_expiry}' \
-            --auth-provider-arg token-key='{.credential.access_token}'
+          # Verify the kubeconfig doesn't use the plugin
+          cat ~/.kube/config
           
-          kubectl config set-context --current --user=gke-user
-          
-          # Verify connection
-          kubectl cluster-info
-          
-          # Get cluster credentials with explicit auth plugin configuration
-          gcloud container clusters get-credentials "$GKE_CLUSTER" \
-            --zone "$GKE_ZONE" \
-            --project "$PROJECT_ID"
-          
-          # Verify the kubeconfig is properly configured
-          echo "=== Kubeconfig ==="
-          kubectl config view
-          
-          # Test cluster connection
-          echo "=== Cluster info ==="
+          # Test connection
           kubectl cluster-info
 
       - name: Set up Helm
@@ -105,20 +70,18 @@ jobs:
 
       - name: Deploy to GKE
         run: |
-          # Export path again to ensure plugin is available
-          export PATH=$PATH:$(gcloud info --format="value(installation.sdk_root)")/bin
+          # Ensure we're using traditional auth
+          export USE_GKE_GCLOUD_AUTH_PLUGIN=False
           
-          # Refresh credentials to ensure they're current
+          # Refresh credentials
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
             --project "$PROJECT_ID"
           
           # Verify connection
-          echo "=== Nodes ==="
           kubectl get nodes
           
           # Deploy with Helm
-          echo "=== Deploying with Helm ==="
           helm upgrade --install $DEPLOYMENT_NAME $HELM_CHART_PATH \
             --namespace default \
             --create-namespace \
@@ -135,3 +98,5 @@ jobs:
           kubectl get pods -o wide
           echo "=== Deployments ==="
           kubectl get deployments -o wide
+          echo "=== Ingress (if enabled) ==="
+          kubectl get ingress -o wide || echo "No ingress found"

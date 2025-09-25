@@ -1,110 +1,131 @@
-name: Deploy NGINX to GKE
+name: Deploy Nginx to GKE
 
 on:
   push:
-    branches: [ main, develop ]
-    paths:
-      - 'helm-chart/**'
-      - '.github/workflows/deploy-nginx.yml'
-  workflow_dispatch:
-    inputs:
-      helm_values_override:
-        description: 'Optional: additional --set pairs (comma or yaml style) for helm (e.g. service.type=NodePort,replicaCount=2)'
-        required: false
-        type: string
-      image_tag:
-        description: 'Optional: override image tag (e.g. 1.25.3)'
-        required: false
-        default: ''
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GKE_CLUSTER: nginx-cluster
-  GKE_ZONE: ${{ secrets.GCP_ZONE }}
-  HELM_CHART_PATH: helm-chart
-  HELM_RELEASE: nginx-release
-  K8S_NAMESPACE: default
+  GKE_ZONE: us-central1-c
+  DEPLOYMENT_NAME: nginx-deployment
+  HELM_CHART_DIR: ./helm-chart
 
 jobs:
-  deploy:
-    name: Deploy to GKE
+  setup-build-publish-deploy:
+    name: Setup, Build, Publish, and Deploy
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    environment: production
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      # Authenticate to GCP using a service account key stored in GH secret (GCP_SA_KEY)
-      - name: Authenticate to Google Cloud
-        uses: google-github-actions/auth@v1
-        with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
 
-      - name: Setup gcloud CLI
-        uses: google-github-actions/setup-gcloud@v1
-        with:
-          project_id: ${{ env.PROJECT_ID }}
-          export_default_credentials: true
+    - name: Configure Docker for GCR
+      run: gcloud auth configure-docker --quiet
 
-      - name: Get GKE credentials
-        run: |
-          gcloud container clusters get-credentials "${{ env.GKE_CLUSTER }}" \
-            --zone "${{ env.GKE_ZONE }}" \
-            --project "${{ env.PROJECT_ID }}"
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        project_id: ${{ env.PROJECT_ID }}
 
-      - name: Install kubectl (ensures version matches gcloud)
-        run: |
-          # kubectl installed via gcloud components sometimes; fallback install if missing
-          if ! command -v kubectl >/dev/null 2>&1; then
-            sudo apt-get update && sudo apt-get install -y ca-certificates
-            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-            sudo install -o root -g root -m 0755 kubectl /usr/local/bin/kubectl
-          fi
-          kubectl version --client
+    - name: Verify cluster connection
+      run: |
+        kubectl get nodes
+        kubectl cluster-info
 
-      - name: Setup Helm
-        uses: azure/setup-helm@v3
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: '3.12.0'
 
-      - name: Prepare Helm args
-        id: helm_args
-        run: |
-          # Build any dependencies (if present)
-          helm dependency build "${HELM_CHART_PATH}" || true
+    - name: Add bitnami repository (for dependencies if needed)
+      run: helm repo add bitnami https://charts.bitnami.com/bitnami
 
-          # Compute optional flags
-          HELM_EXTRA=""
-          if [ -n "${{ github.event.inputs.helm_values_override }}" ]; then
-            # Allow comma-separated or YAML-style --set overrides
-            HELM_EXTRA="--set ${GITHUB_EVENT_INPUTS_HELM_VALUES_OVERRIDE}"
-          fi
+    - name: Update Helm repositories
+      run: helm repo update
 
-          # prefer explicit input image_tag over chart default when provided
-          if [ -n "${{ github.event.inputs.image_tag }}" ]; then
-            HELM_EXTRA="${HELM_EXTRA} --set image.tag=${{ github.event.inputs.image_tag }}"
-          fi
+    - name: Lint Helm chart
+      run: |
+        helm lint ${{ env.HELM_CHART_DIR }}
+        helm template ${{ env.DEPLOYMENT_NAME }} ${{ env.HELM_CHART_DIR }}
 
-          # Export for next step
-          echo "HELM_EXTRA=${HELM_EXTRA}" >> "$GITHUB_OUTPUT"
+    - name: Deploy to GKE with Helm
+      run: |
+        helm upgrade --install ${{ env.DEPLOYMENT_NAME }} ${{ env.HELM_CHART_DIR }} \
+          --namespace=default \
+          --create-namespace \
+          --set replicaCount=3 \
+          --set image.tag="1.25.3" \
+          --set service.type=LoadBalancer \
+          --set resources.requests.cpu=250m \
+          --set resources.requests.memory=256Mi \
+          --set resources.limits.cpu=500m \
+          --set resources.limits.memory=512Mi \
+          --wait \
+          --timeout 5m
 
-      - name: Helm upgrade --install nginx
-        env:
-          HELM_EXTRA: ${{ steps.helm_args.outputs.HELM_EXTRA }}
-        run: |
-          # Use a stable release name; change HELM_RELEASE env if you want a different one
-          echo "Running helm upgrade --install with extra args: $HELM_EXTRA"
-          helm upgrade --install "${HELM_RELEASE}" "${HELM_CHART_PATH}" \
-            --namespace "${K8S_NAMESPACE}" --create-namespace \
-            $HELM_EXTRA \
-            --wait --timeout 5m
-          
-      - name: Show rollout status
-        run: |
-          kubectl rollout status deployment/"${HELM_RELEASE}" -n "${K8S_NAMESPACE}" --timeout=120s || \
-            (kubectl describe deployment "${HELM_RELEASE}" -n "${K8S_NAMESPACE}" && kubectl get pods -n "${K8S_NAMESPACE}" -o wide && exit 1)
+    - name: Verify deployment
+      run: |
+        kubectl get pods -l "app.kubernetes.io/name=nginx"
+        kubectl get service ${{ env.DEPLOYMENT_NAME }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+        echo ""
 
-      - name: Print service and basic info
-        run: |
-          kubectl get svc -n "${K8S_NAMESPACE}" -o wide
-          kubectl get all -n "${K8S_NAMESPACE}" -o wide
+    - name: Run smoke test
+      run: |
+        # Wait for service to get external IP
+        sleep 30
+        SERVICE_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        if [ ! -z "$SERVICE_IP" ]; then
+          echo "Testing service at http://$SERVICE_IP"
+          curl -f http://$SERVICE_IP/health || exit 1
+        else
+          echo "Service does not have an external IP yet"
+        fi
+
+  rollback-on-failure:
+    name: Rollback on Failure
+    runs-on: ubuntu-latest
+    if: failure()
+    needs: [setup-build-publish-deploy]
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+
+    - name: Rollback deployment
+      run: |
+        if helm history ${{ env.DEPLOYMENT_NAME }} | grep -q "FAILED"; then
+          helm rollback ${{ env.DEPLOYMENT_NAME }} 0
+          echo "Rollback completed"
+        else
+          echo "No failed deployment to rollback"
+        fi

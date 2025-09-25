@@ -15,8 +15,7 @@ env:
   GKE_ZONE: ${{ secrets.GCP_ZONE }}
   DEPLOYMENT_NAME: nginx
   IMAGE: nginx
-  HELM_CHART_PATH: ./helm-chart
-  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
+  HELM_CHART_PATH: './helm-chart'
 
 jobs:
   setup-build-publish-deploy:
@@ -34,6 +33,7 @@ jobs:
         uses: google-github-actions/auth@v2
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          token_format: 'access_token'
 
       - name: Set up Google Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
@@ -41,32 +41,41 @@ jobs:
           project_id: ${{ env.PROJECT_ID }}
           install_components: 'gke-gcloud-auth-plugin'
 
-      - name: Configure Docker and Kubectl to use gke-gcloud-auth-plugin
+      - name: Configure gcloud and kubectl
         run: |
-          gcloud --version
-          which gke-gcloud-auth-plugin
-          gke-gcloud-auth-plugin --version
-          echo "GKE auth plugin installed successfully"
-
-      - name: Install kubectl
-        uses: azure/setup-kubectl@v4
-        with:
-          version: 'latest'
-
-      - name: Configure GKE credentials
-        run: |
-          # Set project
+          # Set the project
           gcloud config set project $PROJECT_ID
           
-          # Get GKE credentials with explicit plugin configuration
+          # Install kubectl separately to ensure latest version
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          sudo mv kubectl /usr/local/bin/
+          
+          # Verify installations
+          echo "=== gcloud version ==="
+          gcloud version
+          echo "=== kubectl version ==="
+          kubectl version --client
+          echo "=== gke-gcloud-auth-plugin ==="
+          which gke-gcloud-auth-plugin
+          gke-gcloud-auth-plugin --version
+
+      - name: Get GKE credentials
+        run: |
+          # Export the path to ensure gke-gcloud-auth-plugin is found
+          export PATH=$PATH:$(gcloud info --format="value(installation.sdk_root)")/bin
+          
+          # Get cluster credentials with explicit auth plugin configuration
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
             --project "$PROJECT_ID"
           
-          # Update kubeconfig to use the plugin
+          # Verify the kubeconfig is properly configured
+          echo "=== Kubeconfig ==="
           kubectl config view
           
-          # Test connection
+          # Test cluster connection
+          echo "=== Cluster info ==="
           kubectl cluster-info
 
       - name: Set up Helm
@@ -81,18 +90,20 @@ jobs:
 
       - name: Deploy to GKE
         run: |
-          # Set project
-          gcloud config set project $PROJECT_ID
+          # Export path again to ensure plugin is available
+          export PATH=$PATH:$(gcloud info --format="value(installation.sdk_root)")/bin
           
-          # Refresh GKE credentials
+          # Refresh credentials to ensure they're current
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
             --project "$PROJECT_ID"
           
           # Verify connection
+          echo "=== Nodes ==="
           kubectl get nodes
           
           # Deploy with Helm
+          echo "=== Deploying with Helm ==="
           helm upgrade --install $DEPLOYMENT_NAME $HELM_CHART_PATH \
             --namespace default \
             --create-namespace \
@@ -109,5 +120,3 @@ jobs:
           kubectl get pods -o wide
           echo "=== Deployments ==="
           kubectl get deployments -o wide
-          echo "=== Ingress (if enabled) ==="
-          kubectl get ingress -o wide || echo "No ingress found"

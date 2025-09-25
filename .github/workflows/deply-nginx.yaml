@@ -12,7 +12,7 @@ env:
   GKE_ZONE: us-central1-c
   DEPLOYMENT_NAME: nginx-deployment
   HELM_CHART_DIR: ./helm-chart
-  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
+    USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
 
 jobs:
   setup-build-publish-deploy:
@@ -135,5 +135,4 @@ jobs:
           echo "Rollback completed"
         else
           echo "No failed deployment to rollback"
-        fi
         fi

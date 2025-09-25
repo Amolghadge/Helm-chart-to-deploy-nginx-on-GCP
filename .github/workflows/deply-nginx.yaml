@@ -17,7 +17,8 @@ env:
   DEPLOYMENT_NAME: nginx
   IMAGE: nginx
   HELM_CHART_PATH: ./helm-chart
-  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
+  USE_GKE_GCLOUD_AUTH_PLUGIN: 'True' 
+  
 
 jobs:
   setup-build-publish-deploy:
@@ -38,12 +39,15 @@ jobs:
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - name: Set up Cloud SDK
+      - name: Set up Cloud SDK (with GKE auth plugin)
         uses: google-github-actions/setup-gcloud@v2
+        with:
+          install_components: 'gke-gcloud-auth-plugin'
 
-      - name: Install GKE auth plugin and kubectl
-        run: |
-          gcloud components install gke-gcloud-auth-plugin kubectl -q
+      - name: Install kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
 
       - name: Configure Docker to use gcloud as a credential helper
         run: |
@@ -51,7 +55,7 @@ jobs:
 
       - name: Get GKE credentials
         run: |
-          gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE"
+          gcloud container clusters get-credentials "$GKE_CLUSTER" --zone "$GKE_ZONE" --project "$PROJECT_ID"
 
       - name: Set up Helm
         uses: azure/setup-helm@v4

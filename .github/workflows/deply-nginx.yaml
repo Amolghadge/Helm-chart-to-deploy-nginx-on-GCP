@@ -60,14 +60,22 @@ jobs:
           which gke-gcloud-auth-plugin
           gke-gcloud-auth-plugin --version
 
-      - name: Get GKE credentials (traditional method)
+      - name: Fix kubeconfig for gke-gcloud-auth-plugin
         run: |
-          # Use traditional auth method instead of gke-gcloud-auth-plugin
-          export USE_GKE_GCLOUD_AUTH_PLUGIN=False
-          
+          # Get credentials
           gcloud container clusters get-credentials "$GKE_CLUSTER" \
             --zone "$GKE_ZONE" \
-            --project "$GKE_PROJECT"
+            --project "$PROJECT_ID"
+          
+          # Update kubeconfig to use gcloud instead of gke-gcloud-auth-plugin
+          kubectl config set-credentials gke-user \
+            --auth-provider gcp \
+            --auth-provider-arg cmd-args=config config-helper --format=json \
+            --auth-provider-arg cmd-path=gcloud \
+            --auth-provider-arg expiry-key='{.credential.token_expiry}' \
+            --auth-provider-arg token-key='{.credential.access_token}'
+          
+          kubectl config set-context --current --user=gke-user
           
           # Verify connection
           kubectl cluster-info

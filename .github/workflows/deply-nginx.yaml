@@ -1,23 +1,105 @@
-name: Deploy Nginx to GKE
+name: Deploy to GKE Autopilot
 
 on:
   push:
     branches: [ main, master ]
   pull_request:
     branches: [ main, master ]
+  workflow_dispatch:  # Allow manual triggers
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
-  GKE_CLUSTER: nginx-cluster
-  GKE_ZONE: us-central1-c
+  CLUSTER_NAME: nginx-autopilot-cluster
+  REGION: us-central1
   DEPLOYMENT_NAME: nginx-deployment
   HELM_CHART_DIR: ./helm-chart
-    USE_GKE_GCLOUD_AUTH_PLUGIN: 'True'
+  NAMESPACE: nginx-production
 
 jobs:
-  setup-build-publish-deploy:
-    name: Setup, Build, Publish, and Deploy
+  setup-gcloud:
+    name: Setup Google Cloud
     runs-on: ubuntu-latest
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Configure Docker
+      run: gcloud auth configure-docker --quiet
+
+  create-gke-autopilot-cluster:
+    name: Create GKE Autopilot Cluster
+    runs-on: ubuntu-latest
+    needs: setup-gcloud
+    steps:
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Check if cluster exists
+      id: check-cluster
+      run: |
+        if gcloud container clusters describe $CLUSTER_NAME --region $REGION --project $PROJECT_ID > /dev/null 2>&1; then
+          echo "cluster_exists=true" >> $GITHUB_OUTPUT
+        else
+          echo "cluster_exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Create GKE Autopilot Cluster
+      if: steps.check-cluster.outputs.cluster_exists == 'false'
+      run: |
+        gcloud container clusters create-auto $CLUSTER_NAME \
+          --region $REGION \
+          --project $PROJECT_ID \
+          --release-channel regular \
+          --network "default" \
+          --subnetwork "default" \
+          --cluster-ipv4-cidr "/17" \
+          --services-ipv4-cidr "/22" \
+          --enable-private-nodes \
+          --enable-master-authorized-networks \
+          --master-authorized-networks 0.0.0.0/0 \
+          --enable-ip-alias \
+          --enable-shielded-nodes \
+          --shielded-secure-boot \
+          --labels=env=production,team=devops \
+          --async
+        
+        echo "GKE Autopilot cluster creation started asynchronously"
+
+    - name: Wait for cluster creation
+      if: steps.check-cluster.outputs.cluster_exists == 'false'
+      run: |
+        echo "Waiting for cluster to be created..."
+        while true; do
+          STATUS=$(gcloud container clusters describe $CLUSTER_NAME --region $REGION --format="value(status)")
+          echo "Cluster status: $STATUS"
+          if [ "$STATUS" = "RUNNING" ]; then
+            break
+          elif [ "$STATUS" = "ERROR" ]; then
+            echo "Cluster creation failed"
+            exit 1
+          fi
+          sleep 30
+        done
+
+    - name: Get cluster info
+      run: |
+        gcloud container clusters describe $CLUSTER_NAME --region $REGION --format="table(name, status, location, autopilot.enabled)"
+
+  deploy-nginx:
+    name: Deploy Nginx to GKE Autopilot
+    runs-on: ubuntu-latest
+    needs: [setup-gcloud, create-gke-autopilot-cluster]
     environment: production
 
     steps:
@@ -30,49 +112,38 @@ jobs:
         project_id: ${{ secrets.GCP_PROJECT_ID }}
         service_account_key: ${{ secrets.GCP_SA_KEY }}
         export_default_credentials: true
-        install_components: 'gke-gcloud-auth-plugin'
-
-    - name: Configure Docker for GCR
-      run: gcloud auth configure-docker --quiet
 
     - name: Get GKE credentials
       uses: google-github-actions/get-gke-credentials@v2
       with:
-        cluster_name: ${{ env.GKE_CLUSTER }}
-        location: ${{ env.GKE_ZONE }}
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.REGION }}
         project_id: ${{ env.PROJECT_ID }}
-
-    - name: Verify gke-gcloud-auth-plugin
-      run: |
-        which gke-gcloud-auth-plugin || true
-        gke-gcloud-auth-plugin --version || true
 
     - name: Verify cluster connection
       run: |
         kubectl get nodes
         kubectl cluster-info
+        kubectl get all
 
     - name: Setup Helm
       uses: azure/setup-helm@v3
       with:
         version: '3.12.0'
 
-    - name: Add bitnami repository (for dependencies if needed)
-      run: helm repo add bitnami https://charts.bitnami.com/bitnami
-
-    - name: Update Helm repositories
-      run: helm repo update
+    - name: Create namespace
+      run: |
+        kubectl create namespace ${{ env.NAMESPACE }} --dry-run=client -o yaml | kubectl apply -f -
 
     - name: Lint Helm chart
       run: |
         helm lint ${{ env.HELM_CHART_DIR }}
-        helm template ${{ env.DEPLOYMENT_NAME }} ${{ env.HELM_CHART_DIR }}
+        helm template ${{ env.DEPLOYMENT_NAME }} ${{ env.HELM_CHART_DIR }} --namespace ${{ env.NAMESPACE }}
 
-    - name: Deploy to GKE with Helm
+    - name: Deploy to GKE Autopilot with Helm
       run: |
         helm upgrade --install ${{ env.DEPLOYMENT_NAME }} ${{ env.HELM_CHART_DIR }} \
-          --namespace=default \
-          --create-namespace \
+          --namespace ${{ env.NAMESPACE }} \
           --set replicaCount=3 \
           --set image.tag="1.25.3" \
           --set service.type=LoadBalancer \
@@ -80,32 +151,84 @@ jobs:
           --set resources.requests.memory=256Mi \
           --set resources.limits.cpu=500m \
           --set resources.limits.memory=512Mi \
+          --set securityContext.runAsUser=1000 \
+          --set securityContext.runAsNonRoot=true \
+          --set podSecurityContext.fsGroup=2000 \
           --wait \
-          --timeout 5m
+          --timeout 10m \
+          --atomic
 
     - name: Verify deployment
       run: |
-        kubectl get pods -l "app.kubernetes.io/name=nginx"
-        kubectl get service ${{ env.DEPLOYMENT_NAME }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
-        echo ""
+        echo "Waiting for pods to be ready..."
+        kubectl wait --for=condition=ready pod -l "app.kubernetes.io/name=nginx" --namespace ${{ env.NAMESPACE }} --timeout=300s
+        
+        kubectl get pods --namespace ${{ env.NAMESPACE }}
+        kubectl get service --namespace ${{ env.NAMESPACE }}
+        
+        # Get external IP
+        EXTERNAL_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }} --namespace ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        echo "External IP: $EXTERNAL_IP"
 
-    - name: Run smoke test
+    - name: Run health checks
       run: |
-        # Wait for service to get external IP
-        sleep 30
-        SERVICE_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        # Wait for LoadBalancer to be ready
+        sleep 60
+        
+        SERVICE_IP=$(kubectl get service ${{ env.DEPLOYMENT_NAME }} --namespace ${{ env.NAMESPACE }} -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
         if [ ! -z "$SERVICE_IP" ]; then
-          echo "Testing service at http://$SERVICE_IP"
+          echo "Testing Nginx service at http://$SERVICE_IP"
+          
+          # Test basic connectivity
+          curl -f --retry 5 --retry-delay 10 http://$SERVICE_IP/ || exit 1
+          
+          # Test health endpoint
           curl -f http://$SERVICE_IP/health || exit 1
+          
+          echo "✅ All health checks passed!"
         else
-          echo "Service does not have an external IP yet"
+          echo "⚠️ Service does not have an external IP yet"
         fi
+
+    - name: Store deployment info
+      run: |
+        DEPLOYMENT_INFO=$(kubectl get service ${{ env.DEPLOYMENT_NAME }} --namespace ${{ env.NAMESPACE }} -o json)
+        echo "DEPLOYMENT_INFO<<EOF" >> $GITHUB_ENV
+        echo "$DEPLOYMENT_INFO" >> $GITHUB_ENV
+        echo "EOF" >> $GITHUB_ENV
+
+  cleanup-preview:
+    name: Cleanup Preview Environment
+    if: github.event_name == 'pull_request' && github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    needs: setup-gcloud
+    steps:
+    - name: Setup Google Cloud SDK
+      uses: google-github-actions/setup-gcloud@v2
+      with:
+        project_id: ${{ secrets.GCP_PROJECT_ID }}
+        service_account_key: ${{ secrets.GCP_SA_KEY }}
+        export_default_credentials: true
+
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.REGION }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Delete PR namespace
+      run: |
+        PR_NUMBER=${{ github.event.pull_request.number }}
+        NAMESPACE="pr-${PR_NUMBER}"
+        kubectl delete namespace $NAMESPACE --ignore-not-found=true
+        echo "Cleaned up namespace: $NAMESPACE"
 
   rollback-on-failure:
     name: Rollback on Failure
     runs-on: ubuntu-latest
-    if: failure()
-    needs: [setup-build-publish-deploy]
+    if: failure() && needs.deploy-nginx.result == 'failure'
+    needs: [setup-gcloud, create-gke-autopilot-cluster, deploy-nginx]
     
     steps:
     - name: Checkout
@@ -121,8 +244,8 @@ jobs:
     - name: Get GKE credentials
       uses: google-github-actions/get-gke-credentials@v2
       with:
-        cluster_name: ${{ env.GKE_CLUSTER }}
-        location: ${{ env.GKE_ZONE }}
+        cluster_name: ${{ env.CLUSTER_NAME }}
+        location: ${{ env.REGION }}
         project_id: ${{ env.PROJECT_ID }}
 
     - name: Setup Helm
@@ -130,9 +253,33 @@ jobs:
 
     - name: Rollback deployment
       run: |
-        if helm history ${{ env.DEPLOYMENT_NAME }} | grep -q "FAILED"; then
-          helm rollback ${{ env.DEPLOYMENT_NAME }} 0
-          echo "Rollback completed"
+        if helm history ${{ env.DEPLOYMENT_NAME }} --namespace ${{ env.NAMESPACE }} | grep -q "FAILED"; then
+          helm rollback ${{ env.DEPLOYMENT_NAME }} 0 --namespace ${{ env.NAMESPACE }}
+          echo "✅ Rollback completed successfully"
         else
-          echo "No failed deployment to rollback"
+          echo "ℹ️ No failed deployment to rollback"
+        fi
+
+    - name: Notify failure
+      run: |
+        echo "🚨 Deployment failed! Rollback attempted."
+        echo "Check the deployment logs for more information."
+
+  post-deployment:
+    name: Post-Deployment Summary
+    runs-on: ubuntu-latest
+    needs: [deploy-nginx]
+    if: always()
+    
+    steps:
+    - name: Deployment Summary
+      run: |
+        if [ "${{ needs.deploy-nginx.result }}" == "success" ]; then
+          echo "🎉 Deployment completed successfully!"
+          echo "📊 Cluster: ${{ env.CLUSTER_NAME }}"
+          echo "🌐 Namespace: ${{ env.NAMESPACE }}"
+          echo "🚀 Application: ${{ env.DEPLOYMENT_NAME }}"
+        else
+          echo "❌ Deployment failed"
+          echo "Check the deployment job logs for details"
         fi

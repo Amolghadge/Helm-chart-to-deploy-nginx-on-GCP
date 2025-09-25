@@ -3,19 +3,21 @@ name: Deploy Nginx to GKE
 on:
   push:
     branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
   workflow_dispatch:  # Allow manual triggers
 
 env:
   PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GKE_CLUSTER: nginx-cluster
-  GKE_ZONE: us-central1-c
-  DEPLOYMENT_NAME: nginx-deployment
+  GKE_ZONE: ${{ secrets.GKE_ZONE || 'us-central1-c' }}
+  DEPLOYMENT_NAME: nginx
   HELM_CHART_DIR: ./helm-chart
   NAMESPACE: default
 
 jobs:
-  setup-and-deploy:
-    name: Setup and Deploy to GKE
+  deploy:
+    name: Deploy Nginx to GKE
     runs-on: ubuntu-latest
     environment: production
 
@@ -33,135 +35,159 @@ jobs:
     - name: Configure Docker
       run: gcloud auth configure-docker --quiet
 
-    - name: Check if GKE cluster exists
-      id: check-cluster
+    - name: Verify GKE cluster exists
       run: |
-        if gcloud container clusters describe $GKE_CLUSTER --zone $GKE_ZONE --project $PROJECT_ID > /dev/null 2>&1; then
-          echo "cluster_exists=true" >> $GITHUB_OUTPUT
-          echo "✅ Cluster $GKE_CLUSTER exists"
-        else
-          echo "cluster_exists=false" >> $GITHUB_OUTPUT
-          echo "❌ Cluster $GKE_CLUSTER does not exist"
-        fi
-
-    - name: Create GKE cluster if it doesn't exist
-      if: steps.check-cluster.outputs.cluster_exists == 'false'
-      run: |
-        echo "Creating GKE cluster: $GKE_CLUSTER in zone: $GKE_ZONE"
-        
-        gcloud container clusters create $GKE_CLUSTER \
-          --zone $GKE_ZONE \
-          --project $PROJECT_ID \
-          --num-nodes 2 \
-          --machine-type e2-medium \
-          --enable-autoscaling \
-          --min-nodes 1 \
-          --max-nodes 3 \
-          --enable-autorepair \
-          --enable-autoupgrade \
-          --enable-ip-alias \
-          --release-channel regular \
-          --preemptible \
-          --scopes "https://www.googleapis.com/auth/cloud-platform"
-        
-        echo "✅ GKE cluster created successfully"
-
-    - name: Get GKE credentials
-      run: |
-        echo "Getting credentials for cluster: $GKE_CLUSTER"
-        gcloud container clusters get-credentials $GKE_CLUSTER \
+        echo "Verifying GKE cluster: $GKE_CLUSTER in zone: $GKE_ZONE"
+        gcloud container clusters describe $GKE_CLUSTER \
           --zone $GKE_ZONE \
           --project $PROJECT_ID
         
-        # Verify cluster connection
+        echo "✅ Cluster verification successful"
+
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        project_id: ${{ env.PROJECT_ID }}
+
+    - name: Verify cluster connection
+      run: |
         kubectl cluster-info
+        echo "=== Cluster Nodes ==="
         kubectl get nodes
+        echo "=== Current Deployments ==="
+        kubectl get deployments --all-namespaces
 
     - name: Setup Helm
       uses: azure/setup-helm@v3
       with:
         version: '3.12.0'
 
-    - name: Verify Helm chart
+    - name: Add Helm repositories
+      run: helm repo add bitnami https://charts.bitnami.com/bitnami
+
+    - name: Update Helm repositories
+      run: helm repo update
+
+    - name: Validate Helm chart
       run: |
+        echo "=== Linting Helm chart ==="
         helm lint $HELM_CHART_DIR
-        helm template $DEPLOYMENT_NAME $HELM_CHART_DIR
+        
+        echo "=== Template validation ==="
+        helm template $DEPLOYMENT_NAME $HELM_CHART_DIR --namespace $NAMESPACE --debug
 
     - name: Deploy Nginx using Helm
       run: |
+        echo "Deploying Nginx Helm chart to GKE cluster..."
+        
         helm upgrade --install $DEPLOYMENT_NAME $HELM_CHART_DIR \
           --namespace $NAMESPACE \
           --create-namespace \
-          --set replicaCount=2 \
+          --set replicaCount=3 \
+          --set image.repository=nginx \
           --set image.tag="1.25.3" \
+          --set image.pullPolicy=IfNotPresent \
           --set service.type=LoadBalancer \
+          --set service.port=80 \
+          --set service.targetPort=8080 \
           --set resources.requests.cpu=250m \
           --set resources.requests.memory=256Mi \
           --set resources.limits.cpu=500m \
           --set resources.limits.memory=512Mi \
+          --set securityContext.runAsNonRoot=true \
+          --set securityContext.runAsUser=1000 \
+          --set podSecurityContext.fsGroup=2000 \
           --wait \
-          --timeout 5m
+          --timeout 10m \
+          --atomic
 
     - name: Verify deployment
       run: |
-        echo "Checking deployment status..."
+        echo "=== Deployment status ==="
         kubectl get deployments -n $NAMESPACE
+        
+        echo "=== Pods status ==="
         kubectl get pods -n $NAMESPACE -l "app.kubernetes.io/name=nginx"
         
-        # Wait for pods to be ready
-        kubectl wait --for=condition=ready pod -l "app.kubernetes.io/name=nginx" -n $NAMESPACE --timeout=180s
-
-    - name: Get service information
-      run: |
-        echo "Service details:"
-        kubectl get service $DEPLOYMENT_NAME -n $NAMESPACE
+        echo "=== Services ==="
+        kubectl get services -n $NAMESPACE
         
-        # Get external IP if available
-        EXTERNAL_IP=$(kubectl get service $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || true)
+        echo "=== Waiting for pods to be ready ==="
+        kubectl wait --for=condition=ready pod -l "app.kubernetes.io/name=nginx" -n $NAMESPACE --timeout=300s
+        
+        echo "✅ Deployment verification completed"
+
+    - name: Get application endpoints
+      run: |
+        echo "=== Application Details ==="
+        
+        # Get LoadBalancer IP
+        EXTERNAL_IP=$(kubectl get service $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+        
         if [ -n "$EXTERNAL_IP" ]; then
-          echo "🎉 Nginx is accessible at: http://$EXTERNAL_IP"
-          echo "🌐 Health check: http://$EXTERNAL_IP/health"
+          echo "🎉 Nginx is now accessible at: http://$EXTERNAL_IP"
+          echo "🌐 Health endpoint: http://$EXTERNAL_IP/health"
+          echo "📊 Main endpoint: http://$EXTERNAL_IP/"
         else
           echo "⏳ LoadBalancer IP is being provisioned..."
-          kubectl describe service $DEPLOYMENT_NAME -n $NAMESPACE
+          echo "You can check the status with: kubectl get service $DEPLOYMENT_NAME -n $NAMESPACE -w"
         fi
 
-    - name: Run smoke test
+    - name: Run health checks
       run: |
-        # Wait for LoadBalancer to get IP
-        echo "Waiting for LoadBalancer IP assignment..."
-        sleep 60
+        echo "Running health checks..."
+        
+        # Wait for LoadBalancer to be ready
+        sleep 30
         
         EXTERNAL_IP=$(kubectl get service $DEPLOYMENT_NAME -n $NAMESPACE -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
         
         if [ -n "$EXTERNAL_IP" ]; then
-          echo "Testing Nginx at http://$EXTERNAL_IP"
+          echo "Testing Nginx service at http://$EXTERNAL_IP"
           
           # Test with retries
-          for i in {1..10}; do
-            if curl -f -s http://$EXTERNAL_IP/health > /dev/null; then
-              echo "✅ Smoke test passed!"
+          for i in {1..12}; do
+            echo "Health check attempt $i/12..."
+            if curl -f -s -m 10 http://$EXTERNAL_IP/health; then
+              echo "✅ Health check passed!"
               break
             else
-              echo "Attempt $i/10: Service not ready yet..."
-              sleep 15
+              if [ $i -eq 12 ]; then
+                echo "❌ Health check failed after 12 attempts"
+                exit 1
+              fi
+              sleep 10
             fi
           done
           
-          # Final test
-          curl -f http://$EXTERNAL_IP/health || echo "❌ Smoke test failed"
+          # Test main endpoint
+          curl -f -s -m 10 http://$EXTERNAL_IP/ || echo "⚠️ Main endpoint check failed (might be expected for empty root)"
         else
-          echo "❓ Could not retrieve external IP for smoke test"
+          echo "ℹ️ Skipping health checks - no external IP yet"
         fi
 
-  cleanup-on-failure:
-    name: Cleanup on Failure
+    - name: Display deployment information
+      run: |
+        echo "=== Deployment Summary ==="
+        echo "Cluster: $GKE_CLUSTER"
+        echo "Zone: $GKE_ZONE"
+        echo "Namespace: $NAMESPACE"
+        echo "Application: $DEPLOYMENT_NAME"
+        echo "Chart: $HELM_CHART_DIR"
+        
+        # Get detailed service info
+        kubectl describe service $DEPLOYMENT_NAME -n $NAMESPACE | grep -E "(Name:|Namespace:|Labels:|Annotations:|IP:|Port:)" || true
+
+  rollback:
+    name: Rollback on Failure
     runs-on: ubuntu-latest
-    if: failure() && github.event_name != 'pull_request'
-    needs: setup-and-deploy
+    if: failure() && needs.deploy.result == 'failure'
+    needs: deploy
     
     steps:
-    - name: Checkout
+    - name: Checkout code
       uses: actions/checkout@v4
 
     - name: Setup Google Cloud SDK
@@ -172,29 +198,36 @@ jobs:
         export_default_credentials: true
 
     - name: Get GKE credentials
-      run: |
-        gcloud container clusters get-credentials $GKE_CLUSTER \
-          --zone $GKE_ZONE \
-          --project $PROJECT_ID
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: ${{ env.GKE_CLUSTER }}
+        location: ${{ env.GKE_ZONE }}
+        project_id: ${{ env.PROJECT_ID }}
 
-    - name: Check deployment status
-      run: |
-        helm status $DEPLOYMENT_NAME --namespace $NAMESPACE || true
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
 
-    - name: Rollback if needed
+    - name: Check deployment history
+      run: |
+        echo "=== Deployment History ==="
+        helm history $DEPLOYMENT_NAME --namespace $NAMESPACE || true
+
+    - name: Rollback deployment
       run: |
         if helm history $DEPLOYMENT_NAME --namespace $NAMESPACE 2>/dev/null | grep -q "FAILED"; then
-          echo "Rolling back deployment..."
-          helm rollback $DEPLOYMENT_NAME 0 --namespace $NAMESPACE
+          echo "🚨 Rolling back deployment..."
+          helm rollback $DEPLOYMENT_NAME 0 --namespace $NAMESPACE --wait --timeout 5m
+          echo "✅ Rollback completed successfully"
         else
-          echo "No rollback needed"
+          echo "ℹ️ No failed deployment found to rollback"
         fi
 
     - name: Debug information
       run: |
-        echo "=== Pods ==="
+        echo "=== Debug Information ==="
+        echo "Pods:"
         kubectl get pods -n $NAMESPACE || true
-        echo "=== Services ==="
+        echo "Services:"
         kubectl get services -n $NAMESPACE || true
-        echo "=== Events ==="
-        kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' || true
+        echo "Events:"
+        kubectl get events -n $NAMESPACE --sort-by='.lastTimestamp' | tail -20 || true

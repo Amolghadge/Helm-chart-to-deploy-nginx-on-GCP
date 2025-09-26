@@ -1,67 +1,51 @@
-name: Release
 
-env:
-  #CONTAINER_IMAGE_NAME: "redis:latest"
-  #ARTIFACTORY_NAMESPACE: "com/ab/abce"
-  #ARTIFACTORY_HOST: "artifactory.sdlc.ctl.gcp.com"
- # ARTIFACTORY_BASE_URL: "https://artifactory.sdlc.gcp.com"
-  GCP_PROJECT: "regal-spark-464611-v3"
-  GKE_LOCATION: "europe-west3"
-  GKE_CLUSTER: "jedox-test-cluster"
-  NAMESPACE: dev
+name: Deploy to GKE
 
 on:
-  workflow_dispatch:
   push:
     branches:
-      - "main"
-    paths:
-      - "Chart.yaml"
-      - "values.yaml"
-      - "templates/**"
-      - ".github/workflows/helmcicd.yaml"
+      - main
 
-permissions:
-  contents: 'read'
-  id-token: 'write'
+# NOTE: Set up Workload Identity Federation and add the following secrets to your GitHub repository:
+GCP_PROJECT_NUMBER: "regal-spark-464611-v3"
+# GCP_POOL: The name of your Workload Identity Pool.
+GCP_PROVIDER: google
+GCP_SERVICE_ACCOUNT: "$ {{ secrets.GCP_SERVICE_ACCOUNT }}
 
 jobs:
-  build:
-    name: Build & Push
-    runs-on: abc_docker
-    container:
-      image: artifactory.sdlc.gcp.com/dkr-all/com/ci-cd-helm-deployer:1.0.0
+  deploy:
+    name: Deploy to GKE Cluster
+    runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Workload Identity Auth
-        uses: google-github-actions/auth@v2
-        with:
-          project_id: ${{ env.GCP_PROJECT }}
-          token_format: "access_token"
-          workload_identity_provider: ${{ secrets.DEFAULT_WIF_PROVIDER }}
-          service_account: ${{ secrets.PIPELINE_SERVICE_ACCOUNT_EMAIL }}
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ secrets.GCP_POOL }}/providers/${{ secrets.GCP_PROVIDER }}'
+        service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
 
-      - name: Setup Cloud SDK
-        uses: google-github-actions/setup-gcloud@v2
-        with:
-          version: 'latest'
-          project_id: ${{ env.GCP_PROJECT }}
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: nginx-cluster
+        location: us-central1-c
+        project_id: your-gcp-project-id
 
-      - name: Get GKE Credentials
-        uses: google-github-actions/get-gke-credentials@v2
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_LOCATION }}
-          project_id: ${{ env.GCP_PROJECT }}
-
-      - name: Deploy via Helm
-        shell: bash
-        run: |
-          helm upgrade --install my-nginx-app . \
-            --namespace ${{ env.NAMESPACE }} \
-            --create-namespace \
-            --atomic \
-            --timeout 5m
+    - name: Deploy with Helm
+      run: |
+        # Assumes your Helm chart is in a directory named 'helm-chart' at the root of your repo.
+        helm upgrade --install my-nginx-app ./helm-chart \
+          --namespace default \
+          --create-namespace \
+          --set image.repository=nginx \
+          --set image.tag=1.25.3 \
+          --set replicaCount=2 \
+          --set service.type=LoadBalancer \
+          --set service.port=80

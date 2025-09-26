@@ -13,7 +13,7 @@ on:
 # GCP_SERVICE_ACCOUNT: The email of the service account with GKE deployment permissions.
 
 env:
-  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+  PROJECT_ID: "regal-spark-464611-v3"
   GKE_CLUSTER: nginx-cluster
   GKE_KEY: ${{ secrets.GKE_SA_KEY }}
   GKE_ZONE: us-central1-a

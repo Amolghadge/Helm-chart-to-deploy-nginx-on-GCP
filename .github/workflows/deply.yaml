@@ -1,44 +1,59 @@
-name: Deploy Nginx to GKE
+
+name: Deploy to GKE
 
 on:
   push:
     branches:
       - main
-  workflow_dispatch:
+
+# NOTE: Set up Workload Identity Federation and add the following secrets to your GitHub repository:
+# GCP_PROJECT_NUMBER: "regal-spark-464611-v3"
+# GCP_POOL: The name of your Workload Identity Pool.
+# GCP_PROVIDER: The name of your Workload Identity Provider.
+# GCP_SERVICE_ACCOUNT: The email of the service account with GKE deployment permissions.
 
 env:
-  PROJECT_ID: your-gcp-project-id # Replace with your GCP project ID
+  PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
   GKE_CLUSTER: nginx-cluster
-  GKE_ZONE: your-gke-cluster-zone # e.g., us-central1-c
-  HELM_CHART_PATH: ./nginx-helm # Path to your Helm chart directory
+  GKE_KEY: ${{ secrets.GKE_SA_KEY }}
+  GKE_ZONE: us-central1-a
+  DEPLOYMENT_NAME: nginx
+  NAMESPACE: dev
 
 jobs:
   deploy:
+    name: Deploy to GKE Cluster
     runs-on: ubuntu-latest
+    permissions:
+      contents: 'read'
+      id-token: 'write'
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+    - name: Checkout
+      uses: actions/checkout@v4
 
-      - name: Set up GCP Credentials
-        uses: google-github-actions/auth@v1
-        with:
-          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+    - name: Authenticate to Google Cloud
+      id: auth
+      uses: 'google-github-actions/auth@v2'
+      with:
+        workload_identity_provider: 'projects/${{ secrets.GCP_PROJECT_NUMBER }}/locations/global/workloadIdentityPools/${{ secrets.GCP_POOL }}/providers/${{ secrets.GCP_PROVIDER }}'
+        service_account: '${{ secrets.GCP_SERVICE_ACCOUNT }}'
 
-      - name: Get GKE credentials
-        uses: google-github-actions/get-gke-credentials@v1
-        with:
-          cluster_name: ${{ env.GKE_CLUSTER }}
-          location: ${{ env.GKE_ZONE }}
-          project_id: ${{ env.PROJECT_ID }}
+    - name: Get GKE credentials
+      uses: google-github-actions/get-gke-credentials@v2
+      with:
+        cluster_name: nginx-cluster
+        location: us-central1-c
+        project_id: your-gcp-project-id
 
-      - name: Install Helm
-        uses: azure/helm-install@v1.4
-        with:
-          version: v3.7.1 # Or your desired Helm version
-
-      - name: Deploy Helm chart
-        run: |
-          helm upgrade --install nginx-release ${{ env.HELM_CHART_PATH }} \
-            --namespace default \
-            --create-namespace \
-            --set image.tag=1.21.6 # Example of overriding values, adjust as needed
+    - name: Deploy with Helm
+      run: |
+        # Assumes your Helm chart is in a directory named 'helm-chart' at the root of your repo.
+        helm upgrade --install my-nginx-app ./helm-chart \
+          --namespace default \
+          --create-namespace \
+          --set image.repository=nginx \
+          --set image.tag=1.25.3 \
+          --set replicaCount=2 \
+          --set service.type=LoadBalancer \
+          --set service.port=80

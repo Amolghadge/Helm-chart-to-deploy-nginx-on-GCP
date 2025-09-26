@@ -1,0 +1,44 @@
+name: Deploy Nginx to GKE
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  PROJECT_ID: your-gcp-project-id # Replace with your GCP project ID
+  GKE_CLUSTER: nginx-cluster
+  GKE_ZONE: your-gke-cluster-zone # e.g., us-central1-c
+  HELM_CHART_PATH: ./nginx-helm # Path to your Helm chart directory
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up GCP Credentials
+        uses: google-github-actions/auth@v1
+        with:
+          credentials_json: ${{ secrets.GCP_CREDENTIALS }}
+
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v1
+        with:
+          cluster_name: ${{ env.GKE_CLUSTER }}
+          location: ${{ env.GKE_ZONE }}
+          project_id: ${{ env.PROJECT_ID }}
+
+      - name: Install Helm
+        uses: azure/helm-install@v1.4
+        with:
+          version: v3.7.1 # Or your desired Helm version
+
+      - name: Deploy Helm chart
+        run: |
+          helm upgrade --install nginx-release ${{ env.HELM_CHART_PATH }} \
+            --namespace default \
+            --create-namespace \
+            --set image.tag=1.21.6 # Example of overriding values, adjust as needed

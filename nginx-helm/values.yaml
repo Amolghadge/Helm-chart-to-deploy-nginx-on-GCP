@@ -1,0 +1,25 @@
+replicaCount: 1
+
+image:
+  repository: nginx
+  pullPolicy: IfNotPresent
+  tag: "1.21.6"
+
+service:
+  type: LoadBalancer
+  port: 80
+
+config:
+  name: "nginx.conf"
+  data: |
+    events {
+        worker_connections 1024;
+    }
+    http {
+        server {
+            listen 80;
+            location / {
+                return 200 "Hello from Nginx on GKE!";
+            }
+        }
+    }

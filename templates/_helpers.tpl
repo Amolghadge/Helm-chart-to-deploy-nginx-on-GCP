@@ -1,8 +1,7 @@
-
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "my-nginx-app.name" -}}
+{{- define "nginx-chart.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
@@ -11,7 +10,7 @@ Create a default fully qualified app name.
 We truncate at 63 chars because some Kubernetes name fields are limited to this (by the DNS naming spec).
 If release name contains chart name it will be used as a full name.
 */}}
-{{- define "my-nginx-app.fullname" -}}
+{{- define "nginx-chart.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -27,16 +26,16 @@ If release name contains chart name it will be used as a full name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "my-nginx-app.chart" -}}
+{{- define "nginx-chart.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "my-nginx-app.labels" -}}
-helm.sh/chart: {{ include "my-nginx-app.chart" . }}
-{{ include "my-nginx-app.selectorLabels" . }}
+{{- define "nginx-chart.labels" -}}
+helm.sh/chart: {{ include "nginx-chart.chart" . }}
+{{ include "nginx-chart.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -46,18 +45,7 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "my-nginx-app.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "my-nginx-app.name" . }}
+{{- define "nginx-chart.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "nginx-chart.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
-{{- end }}
-
-{{/*
-Create the name of the service account to use
-*/}}
-{{- define "my-nginx-app.serviceAccountName" -}}
-{{- if .Values.serviceAccount.create }}
-{{- default (include "my-nginx-app.fullname" .) .Values.serviceAccount.name }}
-{{- else }}
-{{- default "default" .Values.serviceAccount.name }}
-{{- end }}
 {{- end }}

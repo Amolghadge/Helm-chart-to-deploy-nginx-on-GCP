@@ -10,8 +10,7 @@ on:
 
 env:
   PROJECT_ID: "regal-spark-464611-v3"
-  CLUSTER_NAME: nginx-helm-chart
-  # GKE_CLUSTER: ${{ secrets.GKE_CLUSTER }}
+  GKE_CLUSTER: nginx-helm-chart   # Use consistent variable name
   GKE_ZONE: "us-central1-a"
   RELEASE_NAME: nginx-release
   CHART_PATH: ./nginx-chart
@@ -48,5 +47,3 @@ jobs:
           helm upgrade --install $RELEASE_NAME $CHART_PATH \
             --namespace default \
             --create-namespace
-
-            

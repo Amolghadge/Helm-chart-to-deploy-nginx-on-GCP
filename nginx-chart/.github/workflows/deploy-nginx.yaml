@@ -11,7 +11,7 @@ on:
 env:
   PROJECT_ID: "regal-spark-464611-v3"
   GKE_CLUSTER: nginx-helm-chart   # Use consistent variable name
-  GKE_ZONE: "us-central1-a"
+  GKE_LOCATION: "us-central1"
   RELEASE_NAME: nginx-release
   CHART_PATH: ./nginx-chart
 
@@ -35,7 +35,7 @@ jobs:
 
       - name: Get GKE credentials
         run: |
-          gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_ZONE --project $PROJECT_ID
+          gcloud container clusters get-credentials $GKE_CLUSTER --zone $GKE_LOCATION --project $PROJECT_ID
 
       - name: Set up Helm
         uses: azure/setup-helm@v4

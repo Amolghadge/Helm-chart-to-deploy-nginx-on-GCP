@@ -2,7 +2,7 @@ replicaCount: 2
 
 image:
   repository: nginx
-  tag: "1.23.1"
+  tag: "1.24.0"
   pullPolicy: IfNotPresent
 
 service:
@@ -12,11 +12,31 @@ service:
 ingress:
   enabled: true
   className: "nginx"
+  annotations:
+    kubernetes.io/ingress.class: nginx
   hosts:
-    - host: nginx.example.com
+    - host: nginx.local
       paths:
         - path: /
           pathType: Prefix
-  tls: []
+
+resources:
+  limits:
+    cpu: 100m
+    memory: 128Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+nodeSelector: {}
+
+tolerations: []
+
+# affinity: {}
+#     - host: nginx.example.com
+#       paths:
+#         - path: /
+#           pathType: Prefix
+#   tls: []
 
   

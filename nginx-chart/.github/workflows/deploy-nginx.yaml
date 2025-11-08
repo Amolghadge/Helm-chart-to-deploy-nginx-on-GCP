@@ -16,8 +16,14 @@ env:
   CHART_PATH: ./nginx-chart
 
 jobs:
-  deploy:
+  terraform:
+    name: 'Terraform'
     runs-on: ubuntu-latest
+    environment: development
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - name: Checkout code

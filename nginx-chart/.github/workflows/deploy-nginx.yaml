@@ -2,10 +2,9 @@ name: Deploy NGINX to GKE
 
 on:
   push:
-    branches: [ main ]
-    paths:
-      - 'nginx-chart/**'
-      - '.github/workflows/deploy-nginx.yml'
+    branches: [ '**' ]  # Triggers on push to any branch
+  pull_request:
+    branches: [ '**' ]  # Triggers on PR to any branch
   workflow_dispatch:
 
 env:
@@ -42,9 +41,9 @@ jobs:
     - name: Get GKE credentials
       run: |
         gcloud container clusters get-credentials \
-          $GKE_CLUSTER \
-          --region $GKE_LOCATION \
-          --project $PROJECT_ID
+          ${{ env.GKE_CLUSTER }} \
+          --region ${{ env.GKE_LOCATION }} \
+          --project ${{ env.PROJECT_ID }}
 
     - name: Verify cluster connection
       run: |
@@ -58,7 +57,7 @@ jobs:
 
     - name: Deploy Helm Chart to GKE
       run: |
-        helm upgrade --install $RELEASE_NAME $CHART_PATH \
+        helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
           --namespace default \
           --create-namespace
 

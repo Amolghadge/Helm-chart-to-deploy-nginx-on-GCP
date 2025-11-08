@@ -9,8 +9,8 @@ on:
   workflow_dispatch:
 
 env:
-  PROJECT_ID: "regal-spark-464611-v3"
-  GKE_CLUSTER: nginx-helm-chart   # Use consistent variable name
+  PROJECT_ID: "ornate-producer-477604-s3"
+  GKE_CLUSTER: "ornate-producer-477604-s3-gke1"   # Use consistent variable name
   GKE_LOCATION: "us-central1"
   RELEASE_NAME: nginx-release
   CHART_PATH: ./nginx-chart

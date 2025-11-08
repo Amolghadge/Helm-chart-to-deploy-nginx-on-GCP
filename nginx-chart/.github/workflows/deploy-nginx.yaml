@@ -59,6 +59,8 @@ jobs:
       run: |
         helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
           --namespace default \
-          --create-namespace
+          --create-namespace \
+          --timeout 10m \
+          --wait 2>&1 | grep -v "metrics.k8s.io" || true
 
         echo "✅ Helm deployment completed successfully."

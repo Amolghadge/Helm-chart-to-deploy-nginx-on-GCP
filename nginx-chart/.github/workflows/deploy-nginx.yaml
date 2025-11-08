@@ -9,7 +9,7 @@ on:
 
 env:
   PROJECT_ID: "ornate-producer-477604-s3"
-  GKE_CLUSTER: "ornate-producer-477604-s3-gke1"
+  GKE_CLUSTER: "gke-standard-cluster	"
   GKE_LOCATION: "us-central1"
   RELEASE_NAME: nginx-release
   CHART_PATH: ./nginx-chart

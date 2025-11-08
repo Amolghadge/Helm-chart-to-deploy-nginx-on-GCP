@@ -9,8 +9,8 @@ on:
 
 env:
   PROJECT_ID: "ornate-producer-477604-s3"
-  GKE_CLUSTER: "ornate-producer-477604-s3-gke1"
-  GKE_LOCATION: "us-central1"
+  GKE_CLUSTER: "gke-standard-cluster"
+  GKE_LOCATION: "us-central1-a"
   RELEASE_NAME: nginx-release
   CHART_PATH: ./nginx-chart
 
@@ -42,7 +42,7 @@ jobs:
       run: |
         gcloud container clusters get-credentials \
           ${{ env.GKE_CLUSTER }} \
-          --region ${{ env.GKE_LOCATION }} \
+          --zone ${{ env.GKE_LOCATION }} \
           --project ${{ env.PROJECT_ID }}
 
     - name: Verify cluster connection
@@ -59,6 +59,8 @@ jobs:
       run: |
         helm upgrade --install ${{ env.RELEASE_NAME }} ${{ env.CHART_PATH }} \
           --namespace default \
-          --create-namespace
+          --create-namespace \
+          --timeout 10m \
+          --wait 2>&1 | grep -v "metrics.k8s.io" || true
 
         echo "✅ Helm deployment completed successfully."

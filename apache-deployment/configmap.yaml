@@ -5,7 +5,7 @@ metadata:
   namespace: default
 data:
   httpd.conf: |
-    ServerRoot "/etc/apache2"
+    ServerRoot "/usr/local/apache2"
     Listen 80
     Listen [::]:80
 
@@ -14,6 +14,7 @@ data:
     LoadModule dir_module modules/mod_dir.so
     LoadModule mime_module modules/mod_mime.so
     LoadModule log_config_module modules/mod_log_config.so
+    LoadModule unixd_module modules/mod_unixd.so
 
     ServerAdmin admin@example.com
     ServerName localhost
@@ -23,9 +24,9 @@ data:
       Require all denied
     </Directory>
 
-    DocumentRoot "/var/www/html"
+    DocumentRoot "/usr/local/apache2/htdocs"
 
-    <Directory "/var/www/html">
+    <Directory "/usr/local/apache2/htdocs">
       AllowOverride None
       Require all granted
     </Directory>
@@ -34,18 +35,16 @@ data:
       Require all denied
     </Files>
 
-    ErrorLog /var/log/apache2/error.log
+    ErrorLog /proc/self/fd/2
     LogLevel warn
 
     LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
     LogFormat "%h %l %u %t \"%r\" %>s %b" common
-    CustomLog /var/log/apache2/access.log combined
+    CustomLog /proc/self/fd/1 combined
 
-    TypesConfig /etc/apache2/mime.types
+    TypesConfig /usr/local/apache2/conf/mime.types
     AddType application/x-compress .Z
     AddType application/x-gzip .gz .tgz
-
-    Include /etc/apache2/conf-enabled/*.conf
   index.html: |
     <!DOCTYPE html>
     <html>

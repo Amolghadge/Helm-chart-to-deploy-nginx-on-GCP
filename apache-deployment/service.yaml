@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: apache-service
+  namespace: default
+  labels:
+    app: apache
+  annotations:
+    cloud.google.com/load-balancer-type: "Internal"
+spec:
+  type: LoadBalancer
+  selector:
+    app: apache
+  ports:
+  - name: http
+    protocol: TCP
+    port: 80
+    targetPort: 80
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800

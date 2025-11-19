@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: apache-config
+  namespace: default
+data:
+  httpd.conf: |
+    ServerRoot "/etc/apache2"
+    Listen 80
+    Listen [::]:80
+
+    LoadModule mpm_prefork_module modules/mod_mpm_prefork.so
+    LoadModule authz_core_module modules/mod_authz_core.so
+    LoadModule dir_module modules/mod_dir.so
+    LoadModule mime_module modules/mod_mime.so
+    LoadModule log_config_module modules/mod_log_config.so
+
+    ServerAdmin admin@example.com
+    ServerName localhost
+
+    <Directory />
+      AllowOverride none
+      Require all denied
+    </Directory>
+
+    DocumentRoot "/var/www/html"
+
+    <Directory "/var/www/html">
+      AllowOverride None
+      Require all granted
+    </Directory>
+
+    <Files ".ht*">
+      Require all denied
+    </Files>
+
+    ErrorLog /var/log/apache2/error.log
+    LogLevel warn
+
+    LogFormat "%h %l %u %t \"%r\" %>s %b \"%{Referer}i\" \"%{User-Agent}i\"" combined
+    LogFormat "%h %l %u %t \"%r\" %>s %b" common
+    CustomLog /var/log/apache2/access.log combined
+
+    TypesConfig /etc/apache2/mime.types
+    AddType application/x-compress .Z
+    AddType application/x-gzip .gz .tgz
+
+    Include /etc/apache2/conf-enabled/*.conf
+  index.html: |
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Apache Server</title>
+      <style>
+        body {
+          font-family: Arial, sans-serif;
+          margin: 50px;
+          background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+          color: white;
+        }
+        h1 {
+          color: #fff;
+        }
+        .container {
+          background: rgba(0, 0, 0, 0.3);
+          padding: 20px;
+          border-radius: 10px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <h1>✓ Apache Web Server is Running</h1>
+        <p>Welcome to Apache running on Kubernetes!</p>
+        <p><strong>Hostname:</strong> <%= hostname %></p>
+        <p><strong>Pod Name:</strong> <%= pod_name %></p>
+      </div>
+    </body>
+    </html>
